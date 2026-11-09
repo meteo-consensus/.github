@@ -1,0 +1,60 @@
+# Reusable release: release-please opens or updates the release PR; when it is merged,
+# it tags, writes CHANGELOG.md and, for package repos, publishes to GitHub Packages.
+#
+# Note: PRs opened with GITHUB_TOKEN do not trigger other workflows, so the release PR
+# gets no CI run. The owner can give release-please a GitHub App token later
+# (factory backlog), until then CI runs again on main after the merge.
+name: Release
+
+on:
+  workflow_call:
+    inputs:
+      publish:
+        description: Publish the package to GitHub Packages when a release is created.
+        type: boolean
+        default: false
+
+permissions: {}
+
+jobs:
+  release-please:
+    name: Release PR
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+    steps:
+      - id: release
+        uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  publish:
+    name: Publish
+    needs: release-please
+    if: inputs.publish && needs.release-please.outputs.release_created == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+          registry-url: https://npm.pkg.github.com
+      - run: pnpm install --frozen-lockfile
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - run: pnpm run check
+      - run: pnpm publish --no-git-checks
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
