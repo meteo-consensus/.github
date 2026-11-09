@@ -41,9 +41,16 @@ jobs:
       - name: Audit
         run: pnpm run audit
 
+  # Public repos only (meteo-consensus/.github#1): on private repos the dependency review
+  # action needs GitHub Code Security or GitHub Advanced Security
+  # (docs.github.com/en/code-security/concepts/supply-chain-security/about-dependency-review,
+  # checked 09/11/2026), so the job is skipped there and `pnpm audit` (job `check`) is their
+  # dependency gate. In a `workflow_call`, the `github` context is the
+  # caller's (docs.github.com/en/actions/reference/workflows-and-actions/reusing-workflow-configurations,
+  # checked 09/11/2026), so `private` is the calling repo's visibility.
   dependency-review:
     name: Dependency review
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' && github.event.repository.private == false
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
