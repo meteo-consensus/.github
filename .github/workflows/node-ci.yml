@@ -25,6 +25,9 @@ jobs:
         with:
           node-version-file: .node-version
           cache: pnpm
+          # Writes a user-level .npmrc reading NODE_AUTH_TOKEN (pnpm ignores project-level tokens).
+          registry-url: https://npm.pkg.github.com
+          scope: "@meteo-consensus"
       - name: Install
         run: pnpm install --frozen-lockfile
         env:
