@@ -1,0 +1,28 @@
+# Keeps the actions pinned by SHA in this repository's workflows up to date, including the
+# reusable workflows (node-ci.yml, release.yml, publish.yml) that every product repo calls
+# (meteo-consensus/.github#8). Same block as the factory template
+# (templates/repo/.github/dependabot.yml): weekly, 7-day cooldown.
+#
+# Cooldown: a release is proposed only after it has been public for 7 days (same rule as
+# pnpm minimumReleaseAge, docs/standards.md). It applies to version updates only: security
+# updates are never delayed, which matches the standards' CVE exception.
+#
+# Keys checked against docs.github.com, « Dependabot options reference » (source
+# github/docs@92ac1df, content/code-security/reference/supply-chain-security/
+# dependabot-options-reference.md, read 10/11/2026): for github-actions, `directory: /`
+# scans /.github/workflows; cooldown supports `default-days` only (no semver-*-days);
+# `include` accepts only `scope`; labels missing from the repository are ignored.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: ci
+      include: scope
+    cooldown:
+      default-days: 7
+    labels:
+      - type:chore
+      - area:ci
