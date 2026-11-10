@@ -1,0 +1,13 @@
+# Temporary trial for issue #11, removed before review: non-package caller form.
+name: Trial 11 A (no package)
+on:
+  push:
+    branches: [ci/11-release-least-privilege]
+permissions: {}
+jobs:
+  release:
+    if: false
+    uses: ./.github/workflows/release.yml
+    permissions:
+      contents: write
+      pull-requests: write
