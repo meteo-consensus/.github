@@ -1,0 +1,16 @@
+# Deliberate error to show the actionlint check failing (meteo-consensus/.github#6).
+# Reverted in the next commit.
+name: Deliberate error
+
+on:
+  workflow_call:
+
+permissions: {}
+
+jobs:
+  broken:
+    runs-on: ubuntu-latest
+    needs: job-that-does-not-exist
+    permissions: {}
+    steps:
+      - run: echo "${{ github.no_such_property }}"
