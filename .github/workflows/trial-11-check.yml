@@ -1,0 +1,90 @@
+# Temporary trial for issue #11, removed before review: runs the exact tarball check script
+# of publish.yml (extracted from the file at this commit) against a real pnpm pack tarball
+# and crafted malicious tarballs.
+name: Trial 11 tarball check
+
+on:
+  push:
+    branches: [ci/11-release-least-privilege]
+
+permissions: {}
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          path: src
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+        with:
+          version: 12.17.0
+      - name: Extract the check script from publish.yml
+        run: |
+          awk '/^          set -euo pipefail$/{on=1} on{print substr($0, 11)} /^          echo "Publishing \$expected"$/{exit}' \
+            src/.github/workflows/publish.yml > "$RUNNER_TEMP/check.sh"
+          echo "lines: $(wc -l < "$RUNNER_TEMP/check.sh")"
+          sha256sum "$RUNNER_TEMP/check.sh"
+          head -n 1 "$RUNNER_TEMP/check.sh"; tail -n 1 "$RUNNER_TEMP/check.sh"
+          python3 --version
+      - name: Build the cases
+        run: |
+          mkdir -p cases/real && cd cases/real
+          echo '{"name":"@meteo-consensus/trial","version":"0.0.1","files":["index.js","lib"]}' > package.json
+          echo 'export const a = 1;' > index.js
+          mkdir lib && echo 'export const b = 2;' > lib/b.js
+          pnpm pack --out ../real.tgz
+          cd .. && tar -tvzf real.tgz
+          python3 - <<'PY'
+          import io, tarfile, json
+          good = json.dumps({"name": "@meteo-consensus/trial", "version": "0.0.1"}).encode()
+          evil = json.dumps({"name": "@meteo-consensus/evil", "version": "6.6.6"}).encode()
+          inj = json.dumps({"name": "@meteo-consensus/trial", "version": "::warning::INJECTED"}).encode()
+          def f(t, name, data):
+              i = tarfile.TarInfo(name); i.size = len(data); t.addfile(i, io.BytesIO(data))
+          def link(t, name, target, kind):
+              i = tarfile.TarInfo(name); i.type = kind; i.linkname = target; t.addfile(i)
+          cases = {
+              "two-roots": lambda t: (f(t, "package/package.json", good), f(t, "evil/package.json", evil)),
+              "evil-root-first": lambda t: (f(t, "evil/package.json", evil), f(t, "package/package.json", good)),
+              "dotdot": lambda t: (f(t, "package/package.json", good), f(t, "package/../evil/package.json", evil)),
+              "dot": lambda t: (f(t, "package/package.json", good), f(t, "package/./x.js", b"1")),
+              "dot-prefix": lambda t: f(t, "./package/package.json", good),
+              "absolute": lambda t: (f(t, "package/package.json", good), f(t, "/package/x.js", b"1")),
+              "double-slash": lambda t: (f(t, "package/package.json", good), f(t, "package//x.js", b"1")),
+              "duplicate-manifest": lambda t: (f(t, "package/package.json", good), f(t, "package/package.json", evil)),
+              "no-manifest": lambda t: f(t, "package/index.js", b"1"),
+              "symlink": lambda t: (f(t, "package/package.json", good), link(t, "package/x.js", "/etc/passwd", tarfile.SYMTYPE)),
+              "hardlink": lambda t: (f(t, "package/package.json", good), link(t, "package/x.js", "package/package.json", tarfile.LNKTYPE)),
+              "fifo": lambda t: (f(t, "package/package.json", good), link(t, "package/x", "", tarfile.FIFOTYPE)),
+              "wrong-version-injection": lambda t: f(t, "package/package.json", inj),
+              "crafted-ok": lambda t: f(t, "package/package.json", good),
+          }
+          for name, build in cases.items():
+              with tarfile.open(f"{name}.tgz", "w:gz", format=tarfile.GNU_FORMAT) as t:
+                  build(t)
+          PY
+          ls
+      - name: Run the check on every case
+        run: |
+          echo '{"name":"@meteo-consensus/trial","version":"0.0.1","private":true}' > trusted.json
+          status=0
+          for tgz in cases/*.tgz; do
+            case_name="$(basename "$tgz" .tgz)"
+            dir="$RUNNER_TEMP/run-$case_name"; mkdir -p "$dir"
+            cp "$tgz" "$dir/package.tgz"; cp trusted.json "$dir/package.json"
+            if (cd "$dir" && RUNNER_TEMP="$dir" bash "$RUNNER_TEMP/check.sh" > out.txt 2>&1); then result=pass; else result=fail; fi
+            echo "== $case_name: $result"
+            sed 's/::/:<colons>:/g' "$dir/out.txt"
+            case "$case_name" in
+              real|crafted-ok) want=pass ;;
+              *) want=fail ;;
+            esac
+            [ "$result" = "$want" ] || { echo "UNEXPECTED for $case_name: wanted $want"; status=1; }
+            if grep -q INJECTED "$dir/out.txt"; then echo "INJECTED text printed for $case_name"; status=1; fi
+          done
+          exit "$status"

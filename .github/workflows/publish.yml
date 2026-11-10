@@ -21,7 +21,8 @@
 #   the checks, packs the tarball (the package's own `prepack` builds it) and uploads it.
 # - `publish` holds `packages: write` but installs nothing: it checks out only
 #   `package.json` and `.node-version` (to set up pnpm and Node.js), downloads the tarball,
-#   fails unless its manifest has the `name` and `version` of that checked-out
+#   fails unless it has a single `package/` root of regular files and directories with one
+#   `package/package.json` whose `name` and `version` are those of the checked-out
 #   `package.json`, and publishes it with `--ignore-scripts`. Only that last step receives
 #   NODE_AUTH_TOKEN.
 # Dependency code (run by `pnpm run check` and `prepack` in `build`) never holds a token
@@ -106,15 +107,41 @@ jobs:
           artifact-ids: ${{ needs.build.outputs.artifact-id }}
       # jq and tar ship with the ubuntu-latest image (checked on runners, see
       # meteo-consensus/.github#11); nothing is installed here.
+      # Structure first, fail closed: npm reads a tarball manifest with the first path
+      # segment stripped, so a second root (`evil/package.json`) would pass a check of
+      # `package/package.json` alone. Nothing read from the tarball is printed (no workflow
+      # command injection): only the trusted expected value and a hash of the manifest.
       - name: Check the tarball is the checked-out package and version
+        shell: bash
         run: |
-          expected="$(jq -r '.name + "@" + .version' package.json)"
-          actual="$(tar -xzOf package.tgz package/package.json | jq -r '.name + "@" + .version')"
-          if [ "$actual" != "$expected" ]; then
-            echo "::error::tarball manifest is '$actual', package.json at this commit is '$expected'"
-            exit 1
+          set -euo pipefail
+          fail() { echo "::error::$1"; exit 1; }
+          entries="$RUNNER_TEMP/tarball-entries.txt"
+          tar -tzf package.tgz > "$entries"
+          [ -s "$entries" ] || fail "the tarball is empty"
+          if grep -qvE '^package(/[^/]+)*/?$' "$entries"; then
+            fail "the tarball has an entry outside package/ or an empty path segment"
           fi
-          echo "Publishing $actual"
+          if grep -qE '(^|/)\.\.?(/|$)' "$entries"; then
+            fail "the tarball has a '.' or '..' path segment"
+          fi
+          manifests="$(grep -cxF 'package/package.json' "$entries" || true)"
+          [ "$manifests" = 1 ] || fail "the tarball must hold exactly one package/package.json"
+          # Listed to a file first: `grep -q` closing a pipe early would let pipefail turn a
+          # match into a non-match.
+          types="$RUNNER_TEMP/tarball-types.txt"
+          tar -tvzf package.tgz | cut -c1 > "$types"
+          if grep -qv '^[-d]$' "$types"; then
+            fail "the tarball has an entry that is not a regular file or a directory"
+          fi
+          expected="$(jq -r '.name + "@" + .version' package.json)"
+          manifest="$RUNNER_TEMP/tarball-manifest.json"
+          tar -xzOf package.tgz package/package.json > "$manifest"
+          actual="$(jq -r '.name + "@" + .version' "$manifest")"
+          if [ "$actual" != "$expected" ]; then
+            fail "tarball manifest (sha256 $(sha256sum "$manifest" | cut -c1-64)) is not $expected"
+          fi
+          echo "Publishing $expected"
       - name: Publish the tarball (no scripts)
         run: pnpm publish ./package.tgz --ignore-scripts --no-git-checks
         env:
