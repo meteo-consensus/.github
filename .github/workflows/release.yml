@@ -36,6 +36,19 @@ jobs:
     name: Release PR
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # One release-please run at a time per calling repository, so that two pushes to main in
+    # a row never update the same release PR or create the same tag side by side
+    # (meteo-consensus/.github#14). In a called workflow the `github` context is the caller's,
+    # so `github.repository` is the calling repo. The run in progress is never cancelled;
+    # the others wait (`queue: max`: up to 100 pending, any further run is cancelled), in
+    # FIFO order of the time each started waiting, which GitHub says is not guaranteed.
+    # The name differs from `publish-package-…` in `publish.yml` on purpose: a publish never
+    # waits for a release-please run, nor the reverse. Source: GitHub docs, "Workflow syntax"
+    # (jobs.<job_id>.concurrency) and "Reusing workflow configurations", checked 10/11/2026.
+    concurrency:
+      group: release-please-${{ github.repository }}
+      cancel-in-progress: false
+      queue: max
     permissions:
       contents: write
       pull-requests: write
