@@ -1,11 +1,13 @@
-# Keeps the actions pinned by SHA in this repository's workflows up to date, including the
-# reusable workflows (node-ci.yml, release.yml, publish.yml) that every product repo calls
+# Keeps the actions pinned by SHA in all workflows in .github/workflows up to date,
+# including the reusable workflows that every product repo calls
 # (meteo-consensus/.github#8). Same block as the factory template
 # (templates/repo/.github/dependabot.yml): weekly, 7-day cooldown.
 #
 # Cooldown: a release is proposed only after it has been public for 7 days (same rule as
-# pnpm minimumReleaseAge, docs/standards.md). It applies to version updates only: security
-# updates are never delayed, which matches the standards' CVE exception.
+# pnpm minimumReleaseAge, docs/standards.md). The cooldown applies to version updates only.
+# On this repository Dependabot alerts are on but Dependabot security updates are off
+# (checked 10/11/2026): until the owner enables them, a CVE fix (the standards' exception
+# to the 7-day rule) is a manual bump through /check-versions when the alert fires.
 #
 # Keys checked against docs.github.com, « Dependabot options reference » (source
 # github/docs@92ac1df, content/code-security/reference/supply-chain-security/

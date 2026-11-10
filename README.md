@@ -28,7 +28,7 @@ jobs:
 - `.github/ISSUE_TEMPLATE/`: task and epic forms used by the factory agents.
 - `.github/pull_request_template.md`, `SECURITY.md`: inherited by every repo.
 
-Actions are pinned by full commit SHA; versions are checked with `/check-versions` in the factory. `.github/dependabot.yml` proposes their updates weekly (`github-actions` ecosystem, 7-day cooldown, same as the factory repo template); the cooldown only delays version updates, never security updates.
+Actions are pinned by full commit SHA; versions are checked with `/check-versions` in the factory. `.github/dependabot.yml` proposes their updates weekly (`github-actions` ecosystem, 7-day cooldown, same as the factory repo template); the cooldown only delays version updates. Dependabot alerts are on for this repository but Dependabot security updates are off, so a CVE fix is a manual bump through `/check-versions` when the alert fires.
 
 ## Releases and pinning
 
