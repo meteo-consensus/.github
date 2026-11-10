@@ -32,7 +32,9 @@ Actions are pinned by full commit SHA; versions are checked with `/check-version
 
 ## Releases and pinning
 
-This repository is released with release-please (`release-please-config.json`, `.release-please-manifest.json`): merging the release PR tags `vX.Y.Z` on `main`, publishes a GitHub release and updates `CHANGELOG.md`. Versions stay in 0.x until the workflows are stable (first release `v0.1.0`); a breaking change (`ci!:`, `feat!:`) bumps the minor version while in 0.x. `feat`, `fix` and `ci` commits make a release; `docs` and `chore` commits do not.
+This repository is released with release-please (`release-please-config.json`, `.release-please-manifest.json`): the release PR updates `CHANGELOG.md` and the manifest, and merging it tags `vX.Y.Z` on `main` and publishes a GitHub release. Versions stay in 0.x until the workflows are stable (first release `v0.1.0`); a breaking change (`ci!:`, `feat!:`) bumps the minor version while in 0.x. `feat`, `fix`, `perf`, `revert` and `ci` commits make a release; `docs` and `chore` commits do not (unless marked breaking).
+
+Merging the release PR needs one manual step. release-please opens and updates it with `GITHUB_TOKEN`, which does not trigger `pull_request` workflows, so the required `actionlint` check never reports on it and the `main` ruleset blocks the merge. Just before merging, the owner closes and reopens the release PR: that runs `actionlint` on its current head.
 
 To pin a call on a release, resolve the tag to its commit and write the tag as a comment on the same line:
 
