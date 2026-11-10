@@ -20,8 +20,17 @@
 # - `build` installs with `--ignore-scripts` and a token limited to `packages: read`, runs
 #   the checks, packs the tarball (the package's own `prepack` builds it) and uploads it.
 # - `publish` holds `packages: write` but installs nothing: it checks out only
-#   `package.json` and `.node-version` (to set up pnpm and Node.js), downloads the tarball
-#   and publishes it with `--ignore-scripts`. Only that last step receives NODE_AUTH_TOKEN.
+#   `package.json` and `.node-version` (to set up pnpm and Node.js), downloads the tarball,
+#   fails unless its manifest has the `name` and `version` of that checked-out
+#   `package.json`, and publishes it with `--ignore-scripts`. Only that last step receives
+#   NODE_AUTH_TOKEN.
+# Dependency code (run by `pnpm run check` and `prepack` in `build`) never holds a token
+# that can publish and cannot choose the published name or version, but it can still alter
+# the built code inside the legitimate version: residual risk, only a reproducible build or
+# provenance would close it.
+#
+# Recovery: the tarball is kept 7 days, so a failed `publish` job can be re-run alone from
+# the run page within that window; after it, re-run the `build` job, which re-runs `publish`.
 name: Publish
 
 on:
@@ -58,10 +67,10 @@ jobs:
         run: pnpm pack --out package.tgz
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: package
+          name: publish-package-tarball
           path: package.tgz
           if-no-files-found: error
-          retention-days: 1
+          retention-days: 7
 
   publish:
     name: Publish
@@ -87,7 +96,18 @@ jobs:
           scope: "@meteo-consensus"
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: package
+          name: publish-package-tarball
+      # jq and tar ship with the ubuntu-latest image (checked on runners, see
+      # meteo-consensus/.github#11); nothing is installed here.
+      - name: Check the tarball is the checked-out package and version
+        run: |
+          expected="$(jq -r '.name + "@" + .version' package.json)"
+          actual="$(tar -xzOf package.tgz package/package.json | jq -r '.name + "@" + .version')"
+          if [ "$actual" != "$expected" ]; then
+            echo "::error::tarball manifest is '$actual', package.json at this commit is '$expected'"
+            exit 1
+          fi
+          echo "Publishing $actual"
       - name: Publish the tarball (no scripts)
         run: pnpm publish ./package.tgz --ignore-scripts --no-git-checks
         env:
