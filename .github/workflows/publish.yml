@@ -1,0 +1,186 @@
+# Reusable publish to GitHub Packages, for repos that ship an npm package (contracts, db).
+# Called after `release.yml`, only when it created a release:
+#
+#   jobs:
+#     release:
+#       uses: meteo-consensus/.github/.github/workflows/release.yml@<sha40> # <version>
+#       permissions:
+#         contents: write
+#         pull-requests: write
+#     publish:
+#       needs: release
+#       if: needs.release.outputs.release_created == 'true'
+#       uses: meteo-consensus/.github/.github/workflows/publish.yml@<sha40> # <version>
+#       permissions:
+#         contents: read
+#         packages: write
+#
+# Least privilege (meteo-consensus/.github#11): the GITHUB_TOKEN carries the permissions
+# of the whole job, so no job that installs or runs dependency code holds `packages: write`.
+# - `build` installs with `--ignore-scripts` and a token limited to `packages: read`, runs
+#   the checks, packs the tarball (the package's own `prepack` builds it), uploads it and
+#   exposes its sha256.
+# - `publish` holds `packages: write` but installs nothing: it checks out only
+#   `package.json` and `.node-version` (to set up pnpm and Node.js) and downloads the
+#   tarball. It fails unless the tarball has the sha256 `build` reported, a single
+#   `package/` root of regular files and directories and one `package/package.json`. It
+#   then extracts it with GNU tar, checks the extracted manifest's `name` and `version`
+#   against the checked-out `package.json`, rebuilds a new tarball from the extracted files
+#   and publishes only that rebuilt tarball, with `--ignore-scripts`. What is published is
+#   exactly what GNU tar extracted and checked: tricks that make tar readers disagree (a
+#   second root, a lone zero block before more entries) cannot reach the registry. Only the
+#   publish step receives NODE_AUTH_TOKEN. One publish runs at a time per repository.
+# Dependency code (run by `pnpm run check` and `prepack` in `build`) never holds a token
+# that can publish and cannot choose the published name or version, but it can still alter
+# the built code inside the legitimate version: residual risk, only a reproducible build or
+# provenance would close it (follow-up).
+#
+# Recovery: the tarball is kept 7 days, so a failed `publish` job can be re-run alone from
+# the run page within that window; after it, re-run the `build` job, which re-runs `publish`.
+name: Publish
+
+on:
+  workflow_call:
+
+permissions: {}
+
+jobs:
+  build:
+    name: Build package
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: read
+    outputs:
+      artifact-id: ${{ steps.upload.outputs.artifact-id }}
+      tarball-sha256: ${{ steps.pack.outputs.sha256 }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+          # Writes a user-level .npmrc reading NODE_AUTH_TOKEN (pnpm ignores project-level tokens).
+          registry-url: https://npm.pkg.github.com
+          scope: "@meteo-consensus"
+      - name: Install (no dependency scripts, read-only token)
+        run: pnpm install --frozen-lockfile --ignore-scripts
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Check
+        run: pnpm run check
+      - name: Pack
+        id: pack
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm pack --out package.tgz
+          sha256="$(sha256sum package.tgz | cut -c1-64)"
+          echo "package.tgz sha256: $sha256"
+          echo "sha256=$sha256" >> "$GITHUB_OUTPUT"
+      - id: upload
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: publish-package-tarball-${{ github.run_attempt }}
+          path: package.tgz
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # One publish at a time per calling repository (the `github` context is the caller's);
+    # the others wait (`queue: max`, up to 100 pending); GitHub does not guarantee their order.
+    concurrency:
+      group: publish-package-${{ github.repository }}
+      cancel-in-progress: false
+      queue: max
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            /package.json
+            /.node-version
+          sparse-checkout-cone-mode: false
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+          registry-url: https://npm.pkg.github.com
+          scope: "@meteo-consensus"
+      # The exact artifact `build` uploaded, by id. A re-run of `publish` alone keeps the
+      # previous `build` outputs; a re-run of `build` uploads under a new name (per attempt)
+      # because, in a trial on runners (meteo-consensus/.github#11), a second artifact with
+      # the same name in the same run was neither returned by name nor found by id.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.build.outputs.artifact-id }}
+      # jq and GNU tar ship with the ubuntu-latest image (checked on runners, see
+      # meteo-consensus/.github#11); nothing is installed here. Fail closed at every step.
+      # Nothing read from the tarball is printed (no workflow command injection): only
+      # trusted values and hashes.
+      - name: Check, extract and rebuild the tarball
+        shell: bash
+        env:
+          EXPECTED_SHA256: ${{ needs.build.outputs.tarball-sha256 }}
+        run: |
+          set -euo pipefail
+          fail() { echo "::error::$1"; exit 1; }
+          [[ "$EXPECTED_SHA256" =~ ^[0-9a-f]{64}$ ]] || fail "build reported no valid tarball sha256"
+          [ "$(sha256sum package.tgz | cut -c1-64)" = "$EXPECTED_SHA256" ] \
+            || fail "the downloaded tarball is not the one build packed (sha256 mismatch)"
+          entries="$RUNNER_TEMP/tarball-entries.txt"
+          tar -tzf package.tgz > "$entries"
+          [ -s "$entries" ] || fail "the tarball is empty"
+          if grep -qvE '^package(/[^/]+)*/?$' "$entries"; then
+            fail "the tarball has an entry outside package/ or an empty path segment"
+          fi
+          if grep -qE '(^|/)\.\.?(/|$)' "$entries"; then
+            fail "the tarball has a '.' or '..' path segment"
+          fi
+          manifests="$(grep -cxF 'package/package.json' "$entries" || true)"
+          [ "$manifests" = 1 ] || fail "the tarball must hold exactly one package/package.json"
+          # Listed to a file first: `grep -q` closing a pipe early would let pipefail turn a
+          # match into a non-match.
+          types="$RUNNER_TEMP/tarball-types.txt"
+          tar -tvzf package.tgz | cut -c1 > "$types"
+          if grep -qv '^[-d]$' "$types"; then
+            fail "the tarball has an entry that is not a regular file or a directory"
+          fi
+          # Extract into a fresh folder; files belong to the runner user, modes go through
+          # the umask.
+          extracted="$RUNNER_TEMP/tarball-extracted"
+          mkdir "$extracted"
+          tar -xzf package.tgz -C "$extracted" --no-same-owner --no-same-permissions
+          [ "$(ls -A "$extracted")" = package ] || fail "the extracted tarball is not a single package/ folder"
+          if [ -n "$(find "$extracted" ! -type f ! -type d -print -quit)" ]; then
+            fail "the extracted tarball has an entry that is not a regular file or a directory"
+          fi
+          manifest="$extracted/package/package.json"
+          [ -f "$manifest" ] || fail "the extracted tarball has no package/package.json"
+          expected="$(jq -r '.name + "@" + .version' package.json)"
+          actual="$(jq -r '.name + "@" + .version' "$manifest")"
+          if [ "$actual" != "$expected" ]; then
+            fail "tarball manifest (sha256 $(sha256sum "$manifest" | cut -c1-64)) is not $expected"
+          fi
+          # Publish only an archive rebuilt from what was extracted and checked above.
+          rebuilt="$RUNNER_TEMP/rebuilt"
+          mkdir "$rebuilt"
+          tar -czf "$rebuilt/package.tgz" -C "$extracted" --format=ustar --sort=name \
+            --owner=0 --group=0 --numeric-owner package
+          rm package.tgz
+          echo "Rebuilt tarball sha256: $(sha256sum "$rebuilt/package.tgz" | cut -c1-64)"
+          echo "Publishing $expected"
+      - name: Publish the rebuilt tarball (no scripts)
+        run: pnpm publish "$RUNNER_TEMP/rebuilt/package.tgz" --ignore-scripts --no-git-checks
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
