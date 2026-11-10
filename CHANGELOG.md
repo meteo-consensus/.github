@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.2](https://github.com/meteo-consensus/.github/compare/v0.1.1...v0.1.2) (2026-11-10)
+
+
+### Workflows
+
+* queue release-please runs per calling repository ([#23](https://github.com/meteo-consensus/.github/issues/23)) ([e880d3f](https://github.com/meteo-consensus/.github/commit/e880d3fdd421bab8b05de5b5d9718e2a90ed80da)), closes [#14](https://github.com/meteo-consensus/.github/issues/14)
+
 ## [0.1.1](https://github.com/meteo-consensus/.github/compare/v0.1.0...v0.1.1) (2026-11-10)
 
 
