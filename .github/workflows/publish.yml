@@ -1,0 +1,94 @@
+# Reusable publish to GitHub Packages, for repos that ship an npm package (contracts, db).
+# Called after `release.yml`, only when it created a release:
+#
+#   jobs:
+#     release:
+#       uses: meteo-consensus/.github/.github/workflows/release.yml@<sha40> # <version>
+#       permissions:
+#         contents: write
+#         pull-requests: write
+#     publish:
+#       needs: release
+#       if: needs.release.outputs.release_created == 'true'
+#       uses: meteo-consensus/.github/.github/workflows/publish.yml@<sha40> # <version>
+#       permissions:
+#         contents: read
+#         packages: write
+#
+# Least privilege (meteo-consensus/.github#11): the GITHUB_TOKEN carries the permissions
+# of the whole job, so no job that installs or runs dependency code holds `packages: write`.
+# - `build` installs with `--ignore-scripts` and a token limited to `packages: read`, runs
+#   the checks, packs the tarball (the package's own `prepack` builds it) and uploads it.
+# - `publish` holds `packages: write` but installs nothing: it checks out only
+#   `package.json` and `.node-version` (to set up pnpm and Node.js), downloads the tarball
+#   and publishes it with `--ignore-scripts`. Only that last step receives NODE_AUTH_TOKEN.
+name: Publish
+
+on:
+  workflow_call:
+
+permissions: {}
+
+jobs:
+  build:
+    name: Build package
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+          # Writes a user-level .npmrc reading NODE_AUTH_TOKEN (pnpm ignores project-level tokens).
+          registry-url: https://npm.pkg.github.com
+          scope: "@meteo-consensus"
+      - name: Install (no dependency scripts, read-only token)
+        run: pnpm install --frozen-lockfile --ignore-scripts
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Check
+        run: pnpm run check
+      - name: Pack
+        run: pnpm pack --out package.tgz
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: package
+          path: package.tgz
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    name: Publish
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            /package.json
+            /.node-version
+          sparse-checkout-cone-mode: false
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+          registry-url: https://npm.pkg.github.com
+          scope: "@meteo-consensus"
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: package
+      - name: Publish the tarball (no scripts)
+        run: pnpm publish ./package.tgz --ignore-scripts --no-git-checks
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
