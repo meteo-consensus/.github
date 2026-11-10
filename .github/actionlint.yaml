@@ -8,3 +8,8 @@ paths:
       # uses. Upstream: rhysd/actionlint#657, open on
       # 10/11/2026. Remove this entry once a release accepts the key.
       - 'unexpected key "queue" for "concurrency" section'
+  .github/workflows/release.yml:
+    ignore:
+      # Same false positive as publish.yml above (rhysd/actionlint#657): release.yml uses
+      # `concurrency.queue` since meteo-consensus/.github#14. Remove with the entry above.
+      - 'unexpected key "queue" for "concurrency" section'
