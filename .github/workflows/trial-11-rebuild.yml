@@ -1,0 +1,119 @@
+# Temporary trial for issue #11, removed before review: runs the exact check, extract and
+# rebuild script of publish.yml (extracted from the file at this commit) against a real
+# pnpm pack tarball, a lone-zero-block tarball, a sha256 mismatch and earlier bad cases.
+# No token is used: `permissions` only allows reading this repository.
+name: Trial 11 rebuild
+
+on:
+  push:
+    branches: [ci/11-release-least-privilege]
+
+permissions: {}
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          path: src
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+        with:
+          version: 12.17.0
+      - name: GNU tar flags used by publish.yml
+        run: |
+          tar --version | head -n 1
+          tar --help | grep -E -- '--no-same-owner|--no-same-permissions|--sort=|--format=|--owner=|--group=|--numeric-owner' || true
+          tar --help | grep -A6 -- '-H, --format=FORMAT' || true
+      - name: Extract the script from publish.yml
+        run: |
+          awk '/- name: Check, extract and rebuild the tarball/{step=1} step && /^          set -euo pipefail$/{on=1} on{print substr($0, 11)} on && /^          echo "Publishing \$expected"$/{exit}' \
+            src/.github/workflows/publish.yml > "$RUNNER_TEMP/check.sh"
+          echo "lines: $(wc -l < "$RUNNER_TEMP/check.sh")"
+          head -n 3 "$RUNNER_TEMP/check.sh"; tail -n 1 "$RUNNER_TEMP/check.sh"
+      - name: Build the cases
+        run: |
+          mkdir -p cases/real && cd cases/real
+          echo '{"name":"@meteo-consensus/trial","version":"0.0.1","bin":{"trial":"bin/cli.js"},"files":["index.js","lib","bin"]}' > package.json
+          echo 'export const a = 1;' > index.js
+          mkdir lib bin && echo 'export const b = 2;' > lib/b.js
+          printf '#!/usr/bin/env node\nconsole.log(1)\n' > bin/cli.js && chmod +x bin/cli.js
+          pnpm pack --out ../real.tgz
+          cd ..
+          python3 - <<'PY'
+          import io, tarfile, json, gzip
+          good = json.dumps({"name": "@meteo-consensus/trial", "version": "0.0.1"}).encode()
+          evil = json.dumps({"name": "@meteo-consensus/evil", "version": "6.6.6"}).encode()
+          def member(name, data):
+              i = tarfile.TarInfo(name); i.size = len(data)
+              buf = i.tobuf(format=tarfile.USTAR_FORMAT)
+              return buf + data + b"\0" * ((512 - len(data) % 512) % 512)
+          def link(t, name, target, kind):
+              i = tarfile.TarInfo(name); i.type = kind; i.linkname = target; t.addfile(i)
+          def f(t, name, data):
+              i = tarfile.TarInfo(name); i.size = len(data); t.addfile(i, io.BytesIO(data))
+          # Lone zero block: real member, ONE zero block, evil member, then the end marker.
+          raw = member("package/package.json", good) + b"\0" * 512 + member("evil/package.json", evil) + b"\0" * 1024
+          with open("lone-zero.tgz", "wb") as out:
+              out.write(gzip.compress(raw))
+          cases = {
+              "two-roots": lambda t: (f(t, "package/package.json", good), f(t, "evil/package.json", evil)),
+              "symlink": lambda t: (f(t, "package/package.json", good), link(t, "package/x.js", "/etc/passwd", tarfile.SYMTYPE)),
+              "wrong-version": lambda t: f(t, "package/package.json", evil.replace(b"evil", b"trial")),
+          }
+          for name, build in cases.items():
+              with tarfile.open(f"{name}.tgz", "w:gz", format=tarfile.GNU_FORMAT) as t:
+                  build(t)
+          PY
+          cp real.tgz sha-mismatch.tgz
+          ls
+      - name: Run the script on every case
+        run: |
+          echo '{"name":"@meteo-consensus/trial","version":"0.0.1","private":true}' > trusted.json
+          status=0
+          for tgz in cases/*.tgz; do
+            case_name="$(basename "$tgz" .tgz)"
+            dir="$RUNNER_TEMP/run-$case_name"; mkdir -p "$dir/temp"
+            cp "$tgz" "$dir/package.tgz"; cp trusted.json "$dir/package.json"
+            sha="$(sha256sum "$tgz" | cut -c1-64)"
+            [ "$case_name" = sha-mismatch ] && sha="$(printf '%064d' 0)"
+            if (cd "$dir" && RUNNER_TEMP="$dir/temp" EXPECTED_SHA256="$sha" bash "$RUNNER_TEMP/check.sh" > out.txt 2>&1); then result=pass; else result=fail; fi
+            echo "== $case_name: $result"
+            sed 's/::/:<colons>:/g' "$dir/out.txt"
+            case "$case_name" in
+              real) want=pass ;;
+              lone-zero) want=any ;;
+              *) want=fail ;;
+            esac
+            if [ "$want" != any ] && [ "$result" != "$want" ]; then echo "UNEXPECTED for $case_name: wanted $want"; status=1; fi
+            if [ -f "$dir/temp/rebuilt/package.tgz" ]; then
+              echo "-- rebuilt archive of $case_name:"
+              tar -tvzf "$dir/temp/rebuilt/package.tgz"
+              if tar -tzf "$dir/temp/rebuilt/package.tgz" | grep -q evil; then echo "EVIL ENTRY in rebuilt $case_name"; status=1; fi
+              [ -e "$dir/package.tgz" ] && { echo "original tarball not removed for $case_name"; status=1; }
+            fi
+          done
+          exit "$status"
+      - name: How pnpm reads the archives (install into a scratch project, no scripts)
+        run: |
+          set -euo pipefail
+          for c in real lone-zero; do
+            src="$RUNNER_TEMP/run-$c/temp/rebuilt/package.tgz"
+            for kind in original rebuilt; do
+              if [ "$kind" = original ]; then tgz="$PWD/cases/$c.tgz"; else tgz="$src"; fi
+              [ -f "$tgz" ] || { echo "== $c $kind: no archive"; continue; }
+              p="$RUNNER_TEMP/consumer-$c-$kind"; mkdir -p "$p"; echo '{"name":"consumer","private":true}' > "$p/package.json"
+              if (cd "$p" && pnpm add "$tgz" --ignore-scripts > add.log 2>&1); then
+                echo "== $c $kind: pnpm add ok, installed:"
+                find "$p/node_modules/@meteo-consensus" -maxdepth 1 -mindepth 1 -printf '%f\n'
+                cat "$p"/node_modules/@meteo-consensus/*/package.json | head -c 300; echo
+              else
+                echo "== $c $kind: pnpm add failed"; tail -n 5 "$p/add.log"
+              fi
+            done
+          done
+          ls -l "$RUNNER_TEMP/consumer-real-rebuilt/node_modules/@meteo-consensus/trial/bin/cli.js"

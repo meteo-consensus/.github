@@ -18,17 +18,22 @@
 # Least privilege (meteo-consensus/.github#11): the GITHUB_TOKEN carries the permissions
 # of the whole job, so no job that installs or runs dependency code holds `packages: write`.
 # - `build` installs with `--ignore-scripts` and a token limited to `packages: read`, runs
-#   the checks, packs the tarball (the package's own `prepack` builds it) and uploads it.
+#   the checks, packs the tarball (the package's own `prepack` builds it), uploads it and
+#   exposes its sha256.
 # - `publish` holds `packages: write` but installs nothing: it checks out only
-#   `package.json` and `.node-version` (to set up pnpm and Node.js), downloads the tarball,
-#   fails unless it has a single `package/` root of regular files and directories with one
-#   `package/package.json` whose `name` and `version` are those of the checked-out
-#   `package.json`, and publishes it with `--ignore-scripts`. Only that last step receives
-#   NODE_AUTH_TOKEN.
+#   `package.json` and `.node-version` (to set up pnpm and Node.js) and downloads the
+#   tarball. It fails unless the tarball has the sha256 `build` reported, a single
+#   `package/` root of regular files and directories and one `package/package.json`. It
+#   then extracts it with GNU tar, checks the extracted manifest's `name` and `version`
+#   against the checked-out `package.json`, rebuilds a new tarball from the extracted files
+#   and publishes only that rebuilt tarball, with `--ignore-scripts`. What is published is
+#   exactly what GNU tar extracted and checked: tricks that make tar readers disagree (a
+#   second root, a lone zero block before more entries) cannot reach the registry. Only the
+#   publish step receives NODE_AUTH_TOKEN. One publish runs at a time per repository.
 # Dependency code (run by `pnpm run check` and `prepack` in `build`) never holds a token
 # that can publish and cannot choose the published name or version, but it can still alter
 # the built code inside the legitimate version: residual risk, only a reproducible build or
-# provenance would close it.
+# provenance would close it (follow-up).
 #
 # Recovery: the tarball is kept 7 days, so a failed `publish` job can be re-run alone from
 # the run page within that window; after it, re-run the `build` job, which re-runs `publish`.
@@ -49,6 +54,7 @@ jobs:
       packages: read
     outputs:
       artifact-id: ${{ steps.upload.outputs.artifact-id }}
+      tarball-sha256: ${{ steps.pack.outputs.sha256 }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -67,7 +73,14 @@ jobs:
       - name: Check
         run: pnpm run check
       - name: Pack
-        run: pnpm pack --out package.tgz
+        id: pack
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm pack --out package.tgz
+          sha256="$(sha256sum package.tgz | cut -c1-64)"
+          echo "package.tgz sha256: $sha256"
+          echo "sha256=$sha256" >> "$GITHUB_OUTPUT"
       - id: upload
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -81,6 +94,12 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # One publish at a time per calling repository (the `github` context is the caller's);
+    # later ones wait in order instead of replacing each other (`queue: max`).
+    concurrency:
+      group: publish-package-${{ github.repository }}
+      cancel-in-progress: false
+      queue: max
     permissions:
       contents: read
       packages: write
@@ -105,17 +124,20 @@ jobs:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           artifact-ids: ${{ needs.build.outputs.artifact-id }}
-      # jq and tar ship with the ubuntu-latest image (checked on runners, see
-      # meteo-consensus/.github#11); nothing is installed here.
-      # Structure first, fail closed: npm reads a tarball manifest with the first path
-      # segment stripped, so a second root (`evil/package.json`) would pass a check of
-      # `package/package.json` alone. Nothing read from the tarball is printed (no workflow
-      # command injection): only the trusted expected value and a hash of the manifest.
-      - name: Check the tarball is the checked-out package and version
+      # jq and GNU tar ship with the ubuntu-latest image (checked on runners, see
+      # meteo-consensus/.github#11); nothing is installed here. Fail closed at every step.
+      # Nothing read from the tarball is printed (no workflow command injection): only
+      # trusted values and hashes.
+      - name: Check, extract and rebuild the tarball
         shell: bash
+        env:
+          EXPECTED_SHA256: ${{ needs.build.outputs.tarball-sha256 }}
         run: |
           set -euo pipefail
           fail() { echo "::error::$1"; exit 1; }
+          [[ "$EXPECTED_SHA256" =~ ^[0-9a-f]{64}$ ]] || fail "build reported no valid tarball sha256"
+          [ "$(sha256sum package.tgz | cut -c1-64)" = "$EXPECTED_SHA256" ] \
+            || fail "the downloaded tarball is not the one build packed (sha256 mismatch)"
           entries="$RUNNER_TEMP/tarball-entries.txt"
           tar -tzf package.tgz > "$entries"
           [ -s "$entries" ] || fail "the tarball is empty"
@@ -134,15 +156,31 @@ jobs:
           if grep -qv '^[-d]$' "$types"; then
             fail "the tarball has an entry that is not a regular file or a directory"
           fi
+          # Extract into a fresh folder; files belong to the runner user, modes go through
+          # the umask.
+          extracted="$RUNNER_TEMP/tarball-extracted"
+          mkdir "$extracted"
+          tar -xzf package.tgz -C "$extracted" --no-same-owner --no-same-permissions
+          [ "$(ls -A "$extracted")" = package ] || fail "the extracted tarball is not a single package/ folder"
+          if [ -n "$(find "$extracted" ! -type f ! -type d -print -quit)" ]; then
+            fail "the extracted tarball has an entry that is not a regular file or a directory"
+          fi
+          manifest="$extracted/package/package.json"
+          [ -f "$manifest" ] || fail "the extracted tarball has no package/package.json"
           expected="$(jq -r '.name + "@" + .version' package.json)"
-          manifest="$RUNNER_TEMP/tarball-manifest.json"
-          tar -xzOf package.tgz package/package.json > "$manifest"
           actual="$(jq -r '.name + "@" + .version' "$manifest")"
           if [ "$actual" != "$expected" ]; then
             fail "tarball manifest (sha256 $(sha256sum "$manifest" | cut -c1-64)) is not $expected"
           fi
+          # Publish only an archive rebuilt from what was extracted and checked above.
+          rebuilt="$RUNNER_TEMP/rebuilt"
+          mkdir "$rebuilt"
+          tar -czf "$rebuilt/package.tgz" -C "$extracted" --format=ustar --sort=name \
+            --owner=0 --group=0 --numeric-owner package
+          rm package.tgz
+          echo "Rebuilt tarball sha256: $(sha256sum "$rebuilt/package.tgz" | cut -c1-64)"
           echo "Publishing $expected"
-      - name: Publish the tarball (no scripts)
-        run: pnpm publish ./package.tgz --ignore-scripts --no-git-checks
+      - name: Publish the rebuilt tarball (no scripts)
+        run: pnpm publish "$RUNNER_TEMP/rebuilt/package.tgz" --ignore-scripts --no-git-checks
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
