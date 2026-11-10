@@ -24,10 +24,31 @@ jobs:
       contents: read
       packages: write
 ```
+- `.github/workflows/release-self.yml`: releases of this repository (see below). It calls `release.yml` by local path, so GitHub runs the called workflow from the same commit as the caller ([Reusing workflows](https://docs.github.com/en/actions/how-tos/reuse-automations/reuse-workflows), checked 10/11/2026).
 - `.github/ISSUE_TEMPLATE/`: task and epic forms used by the factory agents.
 - `.github/pull_request_template.md`, `SECURITY.md`: inherited by every repo.
 
 Actions are pinned by full commit SHA; versions are checked with `/check-versions` in the factory.
+
+## Releases and pinning
+
+This repository is released with release-please (`release-please-config.json`, `.release-please-manifest.json`): the release PR updates `CHANGELOG.md` and the manifest, and merging it tags `vX.Y.Z` on `main` and publishes a GitHub release. Versions stay in 0.x until the workflows are stable (first release `v0.1.0`); a breaking change (`ci!:`, `feat!:`) bumps the minor version while in 0.x. `feat`, `fix`, `perf`, `revert` and `ci` commits make a release; `docs` and `chore` commits do not (unless marked breaking).
+
+Merging the release PR needs one manual step. release-please opens and updates it with `GITHUB_TOKEN`, which does not trigger `pull_request` workflows, so the required `actionlint` check never reports on it and the `main` ruleset blocks the merge. Just before merging, the owner closes and reopens the release PR: that runs `actionlint` on its current head.
+
+To pin a call on a release, resolve the tag to its commit and write the tag as a comment on the same line:
+
+```sh
+gh api repos/meteo-consensus/.github/git/ref/tags/v0.1.0 --jq .object.sha
+```
+
+```yaml
+    uses: meteo-consensus/.github/.github/workflows/release.yml@<sha40> # v0.1.0
+```
+
+release-please creates lightweight tags, so the command above returns the commit SHA directly; if `.object.type` is `tag`, follow it with `gh api repos/meteo-consensus/.github/git/tags/<sha> --jq .object.sha`. Always pin the full 40-character SHA, never the tag name: a tag can be moved, a SHA cannot.
+
+Dependabot (`github-actions` ecosystem) then proposes new releases instead of every commit of `main`: it updates the version comment when it is on the same line as the SHA, and a SHA not associated with any tag is moved to the latest commit instead of the latest release ([Keeping the actions in your workflows secure and up to date](https://docs.github.com/en/actions/reference/security/secure-use#keeping-the-actions-in-your-workflows-secure-and-up-to-date), checked 10/11/2026). It resolves action versions from git tags read as SemVer, and treats a tag with a prerelease suffix (`-rc.1`) as a prerelease ([Dependabot options reference](https://docs.github.com/en/code-security/reference/supply-chain-security/dependabot-options-reference), checked 10/11/2026). Tags are therefore plain `vX.Y.Z`, without a component prefix (`include-component-in-tag: false`).
 
 ## Licence
 
