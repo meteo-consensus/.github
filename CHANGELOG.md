@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.1](https://github.com/meteo-consensus/.github/compare/v0.1.0...v0.1.1) (2026-11-10)
+
+
+### Workflows
+
+* keep pinned actions up to date with dependabot ([#21](https://github.com/meteo-consensus/.github/issues/21)) ([f256622](https://github.com/meteo-consensus/.github/commit/f256622ad148fc7fe6103485cde46eea8f5e504a)), closes [#8](https://github.com/meteo-consensus/.github/issues/8)
+
 ## 0.1.0 (2026-11-10)
 
 
