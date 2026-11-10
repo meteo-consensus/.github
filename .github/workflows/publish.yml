@@ -95,7 +95,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     # One publish at a time per calling repository (the `github` context is the caller's);
-    # later ones wait in order instead of replacing each other (`queue: max`).
+    # the others wait (`queue: max`, up to 100 pending); GitHub does not guarantee their order.
     concurrency:
       group: publish-package-${{ github.repository }}
       cancel-in-progress: false
