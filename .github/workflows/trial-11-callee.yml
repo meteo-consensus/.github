@@ -1,0 +1,68 @@
+# Temporary trial for issue #11, removed before review: tarball check and re-run recovery.
+name: Trial 11 callee
+
+on:
+  workflow_call:
+
+permissions: {}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - run: |
+          echo "image: $ImageOS $ImageVersion"
+          command -v jq tar
+          jq --version
+          tar --version | head -n 1
+          mkdir package
+          echo '{"name":"@meteo-consensus/trial","version":"0.0.1"}' > package/package.json
+          tar -czf package.tgz package
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: publish-package-tarball
+          path: package.tgz
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - run: echo '{"name":"@meteo-consensus/trial","version":"0.0.1","private":true}' > package.json
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: publish-package-tarball
+      - name: Check the tarball is the checked-out package and version
+        run: |
+          expected="$(jq -r '.name + "@" + .version' package.json)"
+          actual="$(tar -xzOf package.tgz package/package.json | jq -r '.name + "@" + .version')"
+          if [ "$actual" != "$expected" ]; then
+            echo "::error::tarball manifest is '$actual', package.json at this commit is '$expected'"
+            exit 1
+          fi
+          echo "Publishing $actual"
+      - name: Mismatch must fail
+        id: bad
+        continue-on-error: true
+        run: |
+          echo '{"name":"@meteo-consensus/trial","version":"9.9.9"}' > package.json
+          expected="$(jq -r '.name + "@" + .version' package.json)"
+          actual="$(tar -xzOf package.tgz package/package.json | jq -r '.name + "@" + .version')"
+          if [ "$actual" != "$expected" ]; then
+            echo "::error::tarball manifest is '$actual', package.json at this commit is '$expected'"
+            exit 1
+          fi
+          echo "Publishing $actual"
+      - name: Assert the mismatch failed
+        env:
+          OUTCOME: ${{ steps.bad.outcome }}
+        run: test "$OUTCOME" = failure
+      - name: Fail on the first attempt only
+        run: |
+          echo "attempt $GITHUB_RUN_ATTEMPT"
+          test "$GITHUB_RUN_ATTEMPT" != 1
