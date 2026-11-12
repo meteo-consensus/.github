@@ -3,14 +3,14 @@
 #
 #   jobs:
 #     release:
-#       uses: meteo-consensus/.github/.github/workflows/release.yml@<sha40> # <version>
+#       uses: meteo-consensus/.github/.github/workflows/release.yml@<sha40> # vX.Y.Z
 #       permissions:
 #         contents: write
 #         pull-requests: write
 #     publish:
 #       needs: release
 #       if: needs.release.outputs.release_created == 'true'
-#       uses: meteo-consensus/.github/.github/workflows/publish.yml@<sha40> # <version>
+#       uses: meteo-consensus/.github/.github/workflows/publish.yml@<sha40> # vX.Y.Z
 #       permissions:
 #         contents: read
 #         packages: write

@@ -5,11 +5,14 @@
 # does not grant, even if that job's `if` would skip it (trial on real runners, 10/11/2026,
 # meteo-consensus/.github#11).
 #
-# Every repo, package or not:
+# Every repo, package or not, pins the call by full commit SHA with the release tag as a
+# comment on the same line, never a branch or a tag name (rule: meteo-consensus/factory
+# docs/standards.md, "Workflows réutilisables de l'organisation"; resolving a tag to its SHA:
+# README.md, "Releases and pinning"):
 #
 #   jobs:
 #     release:
-#       uses: meteo-consensus/.github/.github/workflows/release.yml@<sha40> # <version>
+#       uses: meteo-consensus/.github/.github/workflows/release.yml@<sha40> # vX.Y.Z
 #       permissions:
 #         contents: write
 #         pull-requests: write
