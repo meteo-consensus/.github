@@ -1,0 +1,3 @@
+packages:
+  - "."
+allowBuilds: { "true-case": false, esbuild: off }

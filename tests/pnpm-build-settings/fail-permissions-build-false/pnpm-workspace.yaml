@@ -1,0 +1,6 @@
+packages:
+  - "."
+permissions:
+  esbuild:
+    skills: false
+    build: false

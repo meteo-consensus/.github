@@ -1,0 +1,2 @@
+fail
+::error file=.npmrc,line=1::strict-dep-builds is false

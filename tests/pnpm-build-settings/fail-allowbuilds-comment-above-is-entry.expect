@@ -1,0 +1,2 @@
+fail
+::error file=pnpm-workspace.yaml,line=5::allowBuilds entry "sharp" is true without a justification comment

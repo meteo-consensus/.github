@@ -1,0 +1,6 @@
+packages:
+  - "."
+allowBuilds:
+  # esbuild ships its native binary through postinstall.
+
+  esbuild: true

@@ -1,0 +1,5 @@
+fail
+::error file=pnpm-workspace.yaml,line=3::onlyBuiltDependencies is set
+::error file=pnpm-workspace.yaml,line=5::onlyBuiltDependenciesFile is set
+::error file=pnpm-workspace.yaml,line=6::neverBuiltDependencies is set
+::error file=pnpm-workspace.yaml,line=7::ignoredBuiltDependencies is set

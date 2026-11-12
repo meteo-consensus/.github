@@ -1,0 +1,3 @@
+fail
+::error file=pnpm-workspace.yaml,line=4::pnpmfile is set
+::error file=pnpm-workspace.yaml::effective value of pnpmfile is set

@@ -1,0 +1,2 @@
+fail
+::error file=.NPMRC::.NPMRC is a case variant of .npmrc

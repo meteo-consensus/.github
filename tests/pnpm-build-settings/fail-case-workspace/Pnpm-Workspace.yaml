@@ -1,0 +1,6 @@
+# pnpm reads this file on case-insensitive file systems (Windows, macOS), so a setting such as
+# dangerouslyAllowAllBuilds here would apply there. The check refuses the name itself; the
+# content stays harmless so that the expected result is the same on every file system.
+packages:
+  - "."
+allowBuilds: {}

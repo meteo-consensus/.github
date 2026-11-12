@@ -1,0 +1,2 @@
+fail
+::error file=pnpm-workspace.yaml,line=3::dangerouslyAllowAllBuilds is set
