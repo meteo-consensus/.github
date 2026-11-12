@@ -24,12 +24,16 @@
 #   `package.json` and `.node-version` (to set up pnpm and Node.js) and downloads the
 #   tarball. It fails unless the tarball has the sha256 `build` reported, a single
 #   `package/` root of regular files and directories and one `package/package.json`. It
-#   then extracts it with GNU tar, checks the extracted manifest's `name` and `version`
-#   against the checked-out `package.json`, rebuilds a new tarball from the extracted files
-#   and publishes only that rebuilt tarball, with `--ignore-scripts`. What is published is
-#   exactly what GNU tar extracted and checked: tricks that make tar readers disagree (a
-#   second root, a lone zero block before more entries) cannot reach the registry. Only the
-#   publish step receives NODE_AUTH_TOKEN. One publish runs at a time per repository.
+#   then extracts it with GNU tar, fails if an extracted file has more than one hard link,
+#   checks the extracted manifest's `name` and `version` against the checked-out
+#   `package.json`, normalizes the modes (directories and files that had an execute bit,
+#   such as a `bin`, 0755; other files 0644; no setuid, setgid or sticky bit, nothing
+#   writable by group or others), rebuilds a new tarball from the extracted files, checks
+#   its modes and publishes only that rebuilt tarball, with `--ignore-scripts`. What is
+#   published is exactly what GNU tar extracted and checked, with normalized modes: tricks
+#   that make tar readers disagree (a second root, a lone zero block before more entries)
+#   cannot reach the registry. Only the publish step receives NODE_AUTH_TOKEN. One publish
+#   runs at a time per repository.
 # Dependency code (run by `pnpm run check` and `prepack` in `build`) never holds a token
 # that can publish and cannot choose the published name or version, but it can still alter
 # the built code inside the legitimate version: residual risk, only a reproducible build or
@@ -162,9 +166,15 @@ jobs:
           mkdir "$extracted"
           tar -xzf package.tgz -C "$extracted" --no-same-owner --no-same-permissions
           [ "$(ls -A "$extracted")" = package ] || fail "the extracted tarball is not a single package/ folder"
-          if [ -n "$(find "$extracted" ! -type f ! -type d -print -quit)" ]; then
-            fail "the extracted tarball has an entry that is not a regular file or a directory"
-          fi
+          # Assigned first so that a find error (an unreadable folder) fails the step, where
+          # `[ -n "$(find …)" ]` would ignore it.
+          odd="$(find "$extracted" ! -type f ! -type d -print -quit)" \
+            || fail "the extracted tarball could not be walked"
+          [ -z "$odd" ] || fail "the extracted tarball has an entry that is not a regular file or a directory"
+          # Second barrier, independent of the listing check above (type h).
+          linked="$(find "$extracted" -type f -links +1 -print -quit)" \
+            || fail "the extracted tarball could not be walked"
+          [ -z "$linked" ] || fail "the extracted tarball has a file with more than one hard link"
           manifest="$extracted/package/package.json"
           [ -f "$manifest" ] || fail "the extracted tarball has no package/package.json"
           expected="$(jq -r '.name + "@" + .version' package.json)"
@@ -172,11 +182,23 @@ jobs:
           if [ "$actual" != "$expected" ]; then
             fail "tarball manifest (sha256 $(sha256sum "$manifest" | cut -c1-64)) is not $expected"
           fi
+          # Normalize modes: directories and files that had an execute bit (a package `bin`)
+          # become 0755, other files 0644, whatever build and the umask produced. `a-st`
+          # clears setuid, setgid and sticky: a symbolic `=` alone keeps a directory's
+          # setuid and setgid bits (coreutils manual, « Directories and the Set-User-ID and
+          # Set-Group-ID Bits »).
+          chmod -R u=rwX,go=rX,a-st "$extracted/package"
           # Publish only an archive rebuilt from what was extracted and checked above.
           rebuilt="$RUNNER_TEMP/rebuilt"
           mkdir "$rebuilt"
           tar -czf "$rebuilt/package.tgz" -C "$extracted" --format=ustar --sort=name \
             --owner=0 --group=0 --numeric-owner package
+          # Fail closed unless the rebuilt archive, what is published, has only those modes.
+          modes="$RUNNER_TEMP/rebuilt-modes.txt"
+          tar -tvzf "$rebuilt/package.tgz" | cut -c1-10 > "$modes"
+          if grep -qvxE 'drwxr-xr-x|-rw-r--r--|-rwxr-xr-x' "$modes"; then
+            fail "the rebuilt tarball has a mode other than 0755 or 0644"
+          fi
           rm package.tgz
           echo "Rebuilt tarball sha256: $(sha256sum "$rebuilt/package.tgz" | cut -c1-64)"
           echo "Publishing $expected"
