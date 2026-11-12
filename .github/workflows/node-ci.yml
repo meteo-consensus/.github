@@ -1,6 +1,17 @@
-# Reusable CI for every TypeScript repo of the org. Callers: `uses:
-# meteo-consensus/.github/.github/workflows/node-ci.yml@main` with contents: read and
-# packages: read. Actions pinned by full SHA (factory docs/standards.md, 09/11/2026).
+# Reusable CI for every TypeScript repo of the org. Callers grant contents: read and
+# packages: read, and pin the call by full commit SHA with the release tag as a comment on
+# the same line, never a branch or a tag name (rule: meteo-consensus/factory
+# docs/standards.md, "Workflows réutilisables de l'organisation"; resolving a tag to its SHA:
+# README.md, "Releases and pinning"):
+#
+#   jobs:
+#     ci:
+#       uses: meteo-consensus/.github/.github/workflows/node-ci.yml@<sha40> # vX.Y.Z
+#       permissions:
+#         contents: read
+#         packages: read
+#
+# Actions pinned by full SHA (factory docs/standards.md, 09/11/2026).
 #
 # Before `pnpm install`, the step "Check pnpm build settings" fails the job when the calling
 # repo's pnpm settings open dependency install scripts (meteo-consensus/.github#24), as the
