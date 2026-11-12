@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.3](https://github.com/meteo-consensus/.github/compare/v0.1.2...v0.1.3) (2026-11-12)
+
+
+### Workflows
+
+* normalize modes and refuse hard links before the publish rebuild ([#28](https://github.com/meteo-consensus/.github/issues/28)) ([067b09e](https://github.com/meteo-consensus/.github/commit/067b09e0daee9d5446dc0246d58966bdb36314a5)), closes [#13](https://github.com/meteo-consensus/.github/issues/13)
+* refuse pnpm settings that open dependency install scripts ([#26](https://github.com/meteo-consensus/.github/issues/26)) ([4f52138](https://github.com/meteo-consensus/.github/commit/4f52138622b2acfe22b0b1eb299148525afb11a5)), closes [#24](https://github.com/meteo-consensus/.github/issues/24)
+
 ## [0.1.2](https://github.com/meteo-consensus/.github/compare/v0.1.1...v0.1.2) (2026-11-10)
 
 
