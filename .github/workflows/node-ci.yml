@@ -97,6 +97,8 @@ jobs:
           }
 
           if [ -f "$ws" ]; then
+            # The awk program is single-quoted on purpose: its $0 is awk's, not the shell's.
+            # shellcheck disable=SC2016
             scan "$ws" '
             BEGIN { build = "(^|[{, \t])[\"" sq "]?build[\"" sq "]?[ \t]*:" }
             /^[ \t]*$/ { prevc = 0; next }
@@ -129,6 +131,8 @@ jobs:
           fi
 
           if [ -f "$rc" ]; then
+            # The awk program is single-quoted on purpose: its $0 is awk's, not the shell's.
+            # shellcheck disable=SC2016
             scan "$rc" '
             /^[ \t]*([#;]|$)/ { next }
             {
