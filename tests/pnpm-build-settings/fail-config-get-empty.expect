@@ -7,3 +7,4 @@ fail
 ::error::pnpm config get globalPnpmfile failed or printed nothing
 ::error::pnpm config get configDependencies failed or printed nothing
 ::error::pnpm config get include failed or printed nothing
+::error::pnpm config get lockfileDir failed or printed nothing

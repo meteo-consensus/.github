@@ -13,9 +13,13 @@
 #   comment line just above (the PR mention the rule also requires is checked in review).
 #   Entries set to true are written one per line: flow style (`allowBuilds: { a: true }`) is
 #   refused for them, even with a comment, since a comment there cannot name one entry;
-# - a root .pnpmfile.cjs or .pnpmfile.mjs, or a `pnpmfile`, `globalPnpmfile`,
-#   `configDependencies` or `include` setting: they load code or settings this check cannot read
-#   (a pnpmfile `updateConfig` hook can turn builds on), so they need an owner decision;
+# - a .pnpmfile.cjs or .pnpmfile.mjs at the root (tracked or not) or tracked anywhere below it,
+#   or a `pnpmfile`, `globalPnpmfile`, `configDependencies`, `include` or `lockfileDir` setting
+#   (`lockfileDir` makes pnpm load the default pnpmfile of another directory): they load code or
+#   settings this check cannot read (a pnpmfile `updateConfig` hook can turn builds on), so they
+#   need an owner decision;
+# - a top-level line of pnpm-workspace.yaml that the text scan cannot read as a plain key
+#   (complex `?` or flow key, escape in a quoted key, `<<` merge key), so no key is skipped;
 # - the pre-pnpm 11 keys `onlyBuiltDependencies`, `onlyBuiltDependenciesFile`,
 #   `neverBuiltDependencies`, `ignoredBuiltDependencies`, in pnpm-workspace.yaml or in the `pnpm`
 #   field of package.json (pnpm 11 and later ignore them silently);
@@ -110,7 +114,7 @@ jobs:
           scan() { # <file> <awk program>: annotates its errors, counts the allowBuilds true entries
             local out kind line text
             out=$(awk -v sq="'" -v daab="$daab" -v strict="$strict" -v perm="$perm" -v code="$code" \
-              -v legacy="$legacy" -v need="$need" "$lib$2" "$1")
+              -v legacy="$legacy" -v need="$need" -v rules="$rules" "$lib$2" "$1")
             while IFS=$'\t' read -r kind line text; do
               case $kind in
                 ERR) annotate "$1" "$line" "$text" ;;
@@ -126,7 +130,7 @@ jobs:
             BEGIN {
               build = "(^|[{, \t])[\"" sq "]?build[\"" sq "]?[ \t]*:"
               flowtrue = ":[ \t]*(true|yes|y|on)[ \t]*([,}]|$)"
-              split("pnpmfile globalPnpmfile configDependencies include", a); for (i in a) loads[a[i]] = 1
+              split("pnpmfile globalPnpmfile configDependencies include lockfileDir", a); for (i in a) loads[a[i]] = 1
               split("onlyBuiltDependencies onlyBuiltDependenciesFile neverBuiltDependencies ignoredBuiltDependencies", a)
               for (i in a) old[a[i]] = 1
             }
@@ -134,7 +138,13 @@ jobs:
             /^[ \t]*#/ { prevc = ($0 ~ /^[ \t]*#[ \t]*[^ \t]/); next }
             /^[^ \t]/ {
               section = ""; inner = -1; prevc = 0
-              if (!entry($0)) next
+              if ($0 ~ /^(---|\.\.\.)([ \t]|$)/ || $0 ~ /^%/) next
+              # A key this scan cannot read (complex or flow key, escape, merge key) could hide
+              # any setting: refuse it rather than skip it.
+              if ($0 ~ /^[?{]/ || substr($0, 1, 1) == "[" || !entry($0) || index(K, "\\") || K == "<<") {
+                err("top-level line the check cannot read as a plain key: write each setting as name: value (" rules ").")
+                next
+              }
               section = K
               if (K == "dangerouslyAllowAllBuilds") err(K " is set (value: " V "): " daab)
               if (K == "strictDepBuilds" && falsy(V)) err(K " is false (value: " V "): " strict)
@@ -176,9 +186,18 @@ jobs:
           fi
 
           # Pnpmfiles are never run nor read here: their presence alone needs an owner decision.
+          # At the root, any file (tracked or not); below it, any tracked one, since settings such
+          # as lockfileDir make pnpm load the default pnpmfile of another directory.
           for f in .pnpmfile.cjs .pnpmfile.mjs; do
             if [ -e "$f" ] || [ -L "$f" ]; then annotate "$f" "" "$f exists: $code"; fi
           done
+          if ! nested=$(git ls-files -z -- ':(glob)**/.pnpmfile.cjs' ':(glob)**/.pnpmfile.mjs' | tr '\0' '\n'); then
+            annotate "" "" "git ls-files failed: the pnpmfiles of the repo cannot be listed, so the check fails."
+            nested=""
+          fi
+          while IFS= read -r f; do
+            if [[ "$f" == */* ]]; then annotate "$f" "" "$f exists: $code"; fi
+          done <<<"$nested"
 
           if [ -f "$pj" ]; then
             if ! old=$(jq -r '.pnpm | objects | keys[] | select(IN("onlyBuiltDependencies",
@@ -225,7 +244,7 @@ jobs:
             "sets the build capability (pnpm config get; any value is refused), $perm"
           effective allowBuilds "[.[]? | select(. == true)] | length > $static_true" \
             "has more true entries (pnpm config get) than the $static_true written one per line in $ws, where this check reads their comment. $need"
-          for setting in pnpmfile globalPnpmfile configDependencies include; do
+          for setting in pnpmfile globalPnpmfile configDependencies include lockfileDir; do
             effective "$setting" "$set_value" "is set (pnpm config get): $code"
           done
 

@@ -1,0 +1,4 @@
+fail
+::error file=pnpm-workspace.yaml,line=3::lockfileDir is set
+::error file=sub/.pnpmfile.cjs::sub/.pnpmfile.cjs exists
+::error file=pnpm-workspace.yaml::effective value of lockfileDir is set

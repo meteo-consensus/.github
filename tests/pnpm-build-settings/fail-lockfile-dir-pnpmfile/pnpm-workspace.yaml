@@ -1,0 +1,4 @@
+packages:
+  - "."
+lockfileDir: sub
+allowBuilds: {}
