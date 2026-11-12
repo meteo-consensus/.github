@@ -1,0 +1,2 @@
+fail
+::error file=.pnpmfile.cjs::.pnpmfile.cjs exists

@@ -1,0 +1,1 @@
+pnpm downloads the pnpm 10.0.0 this case pins: run.sh runs it only with --network.

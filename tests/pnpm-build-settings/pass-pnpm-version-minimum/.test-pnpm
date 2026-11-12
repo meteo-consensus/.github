@@ -1,0 +1,3 @@
+#!/bin/sh
+# Test stand-in for pnpm (run.sh puts it first on PATH): the minimum version, unset settings.
+if [ "$1" = --version ]; then echo 12.11.0; else echo null; fi

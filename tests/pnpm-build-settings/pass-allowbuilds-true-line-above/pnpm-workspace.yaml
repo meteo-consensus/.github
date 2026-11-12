@@ -1,0 +1,5 @@
+packages:
+  - "."
+allowBuilds:
+  # Builds its native addon from source on install.
+  "addon@git+https://github.com/org/addon.git": true

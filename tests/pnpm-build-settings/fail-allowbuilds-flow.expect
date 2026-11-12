@@ -1,0 +1,3 @@
+fail
+::error file=pnpm-workspace.yaml,line=3::allowBuilds is written in flow style with a true entry
+::error file=pnpm-workspace.yaml::effective value of allowBuilds has more true entries

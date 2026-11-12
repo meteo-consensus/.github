@@ -1,0 +1,5 @@
+fail
+::error file=package.json::pnpm.onlyBuiltDependencies is set
+::error file=package.json::pnpm.onlyBuiltDependenciesFile is set
+::error file=package.json::pnpm.neverBuiltDependencies is set
+::error file=package.json::pnpm.ignoredBuiltDependencies is set
