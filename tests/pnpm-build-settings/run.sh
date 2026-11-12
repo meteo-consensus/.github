@@ -2,8 +2,10 @@
 # Runs the pnpm build settings check of node-ci.yml on every example repository of this
 # folder and compares the result with the case's `.expect` file (meteo-consensus/.github#24).
 #
-# Usage: run.sh <check script>, the script being the `run` block of the "Check pnpm build
-# settings" step, extracted from node-ci.yml by the CI so that the tested code is the shipped one.
+# Usage: run.sh <check script> [--network], the script being the `run` block of the "Check pnpm
+# build settings" step, extracted from node-ci.yml by the CI so that the tested code is the
+# shipped one. Without --network, it runs the cases that need no network; with it, only the cases
+# holding a `.needs-network` file (they make pnpm download something).
 #
 # `<case>.expect`: first line `pass` or `fail`; for `fail`, each following line is a fixed string
 # that must appear in the output, one per expected `::error` line, and the output must hold
@@ -11,12 +13,19 @@
 set -euo pipefail
 
 check=$(realpath "$1")
+network=0
+if [ "${2-}" = --network ]; then network=1; fi
 here=$(dirname "$(realpath "$0")")
 work=$(mktemp -d)
 failures=0
+ran=0
 
 for dir in "$here"/*/; do
   name=$(basename "$dir")
+  needs=0
+  if [ -f "$dir/.needs-network" ]; then needs=1; fi
+  if [ "$needs" -ne "$network" ]; then continue; fi
+  ran=$((ran + 1))
   expect="$here/$name.expect"
   out="$work/$name.out"
   code=0
@@ -72,4 +81,8 @@ if [ "$failures" -ne 0 ]; then
   echo "::error::$failures pnpm build settings case(s) failed"
   exit 1
 fi
-echo "All pnpm build settings cases passed."
+if [ "$ran" -eq 0 ]; then
+  echo "::error::no pnpm build settings case ran"
+  exit 1
+fi
+echo "All $ran pnpm build settings cases passed."

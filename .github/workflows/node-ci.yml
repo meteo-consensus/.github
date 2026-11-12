@@ -18,6 +18,9 @@
 #   (`lockfileDir` makes pnpm load the default pnpmfile of another directory): they load code or
 #   settings this check cannot read (a pnpmfile `updateConfig` hook can turn builds on), so they
 #   need an owner decision;
+# - a tracked case variant of a root settings file (Pnpm-Workspace.yaml, .NPMRC, Package.json):
+#   pnpm reads it on case-insensitive file systems (Windows, macOS). Pnpmfile names are matched in
+#   any case too (.PNPMFILE.cjs);
 # - a top-level line of pnpm-workspace.yaml that the text scan cannot read as a plain key
 #   (complex `?` or flow key, escape in a quoted key, `<<` merge key), so no key is skipped;
 # - the pre-pnpm 11 keys `onlyBuiltDependencies`, `onlyBuiltDependenciesFile`,
@@ -185,19 +188,31 @@ jobs:
             }'
           fi
 
+          # Names are matched in any case: on a case-insensitive file system (Windows, macOS) pnpm
+          # reads Pnpm-Workspace.yaml or loads .PNPMFILE.cjs, which the exact names above miss.
+          # Tracked files: a pnpmfile at any depth (settings such as lockfileDir make pnpm load the
+          # default pnpmfile of another directory), and a case variant of the root settings files.
           # Pnpmfiles are never run nor read here: their presence alone needs an owner decision.
-          # At the root, any file (tracked or not); below it, any tracked one, since settings such
-          # as lockfileDir make pnpm load the default pnpmfile of another directory.
-          for f in .pnpmfile.cjs .pnpmfile.mjs; do
-            if [ -e "$f" ] || [ -L "$f" ]; then annotate "$f" "" "$f exists: $code"; fi
-          done
-          if ! nested=$(git ls-files -z -- ':(glob)**/.pnpmfile.cjs' ':(glob)**/.pnpmfile.mjs' | tr '\0' '\n'); then
-            annotate "" "" "git ls-files failed: the pnpmfiles of the repo cannot be listed, so the check fails."
-            nested=""
+          if ! tracked=$(git ls-files -z -- ':(glob,icase)**/.pnpmfile.cjs' ':(glob,icase)**/.pnpmfile.mjs' \
+            ':(icase)pnpm-workspace.yaml' ':(icase).npmrc' ':(icase)package.json' | tr '\0' '\n'); then
+            annotate "" "" "git ls-files failed: the pnpm files of the repo cannot be listed, so the check fails."
+            tracked=""
           fi
           while IFS= read -r f; do
-            if [[ "$f" == */* ]]; then annotate "$f" "" "$f exists: $code"; fi
-          done <<<"$nested"
+            lower=${f,,}
+            if [[ "${lower##*/}" == .pnpmfile.[cm]js ]]; then
+              annotate "$f" "" "$f exists: $code"
+            elif [ -n "$f" ] && [ "$f" != "$lower" ]; then
+              annotate "$f" "" "$f is a case variant of $lower: pnpm reads it on case-insensitive file systems (Windows, macOS) but this check reads only the exact name. Rename it to $lower ($rules)."
+            fi
+          done <<<"$tracked"
+          # Untracked pnpmfiles at the root, in any case, when not already reported above.
+          shopt -s nocaseglob nullglob
+          roots=(.pnpmfile.[cm]js)
+          shopt -u nocaseglob nullglob
+          for f in "${roots[@]}"; do
+            if ! grep -qxF -- "$f" <<<"$tracked"; then annotate "$f" "" "$f exists: $code"; fi
+          done
 
           if [ -f "$pj" ]; then
             if ! old=$(jq -r '.pnpm | objects | keys[] | select(IN("onlyBuiltDependencies",
