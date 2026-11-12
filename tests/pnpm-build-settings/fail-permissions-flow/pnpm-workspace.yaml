@@ -1,0 +1,3 @@
+packages:
+  - "."
+permissions: { esbuild: { build: true } }

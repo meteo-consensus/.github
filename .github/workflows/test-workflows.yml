@@ -1,0 +1,43 @@
+# Tests the inline checks of the reusable workflows (meteo-consensus/.github#24). Required check
+# name: "pnpm build settings".
+#
+# The "Check pnpm build settings" step of node-ci.yml is extracted from the workflow with yq, so
+# the tested script is the shipped one, then run on every example repo of
+# tests/pnpm-build-settings by run.sh, which checks each expected failure (not only the exit
+# code). yq 4.54.1, jq 1.7 and shellcheck 0.9.0 are preinstalled on ubuntu-latest (Ubuntu 24.04
+# image 20261101.360.1, actions/runner-images Ubuntu2404-Readme.md, checked 12/11/2026). pnpm is
+# the version of factory docs/standards.md, since this repo has no package.json to pin it.
+name: Test workflows
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pnpm-build-settings:
+    name: pnpm build settings
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+        with:
+          version: 12.17.0
+      - name: Lint the test runner
+        run: shellcheck tests/pnpm-build-settings/run.sh
+      - name: Run the check on the example repos
+        run: |
+          yq -e -r '.jobs.check.steps[] | select(.name == "Check pnpm build settings") | .run' \
+            .github/workflows/node-ci.yml >"$RUNNER_TEMP/check.sh"
+          bash tests/pnpm-build-settings/run.sh "$RUNNER_TEMP/check.sh"

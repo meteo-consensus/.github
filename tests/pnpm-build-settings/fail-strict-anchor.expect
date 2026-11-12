@@ -1,0 +1,2 @@
+fail
+::error file=pnpm-workspace.yaml::effective value of strictDepBuilds is false

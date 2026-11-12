@@ -1,0 +1,2 @@
+fail
+::error file=pnpm-workspace.yaml,line=4::allowBuilds entry "esbuild" is true without a justification comment

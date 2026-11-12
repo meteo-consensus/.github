@@ -1,0 +1,6 @@
+packages:
+  - "."
+strictDepBuilds: true
+permissions:
+  some-pkg:
+    skills: false

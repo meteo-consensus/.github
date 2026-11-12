@@ -1,0 +1,2 @@
+fail
+::error file=.npmrc,line=1::permissions grants the build capability
