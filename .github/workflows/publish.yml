@@ -184,9 +184,9 @@ jobs:
           fi
           # Normalize modes: directories and files that had an execute bit (a package `bin`)
           # become 0755, other files 0644, whatever build and the umask produced. `a-st`
-          # clears setuid, setgid and sticky: a symbolic `=` alone keeps a directory's
-          # setuid and setgid bits (coreutils manual, « Directories and the Set-User-ID and
-          # Set-Group-ID Bits »).
+          # clears setuid, setgid and sticky: `u=rwX,go=rX` alone keeps a directory's setgid
+          # bit (GNU coreutils manual, « Directories and the Set-User-ID and Set-Group-ID
+          # Bits »; same with the image's uutils chmod 0.10.0, meteo-consensus/.github#13).
           chmod -R u=rwX,go=rX,a-st "$extracted/package"
           # Publish only an archive rebuilt from what was extracted and checked above.
           rebuilt="$RUNNER_TEMP/rebuilt"
