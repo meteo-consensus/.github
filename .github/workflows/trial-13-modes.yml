@@ -163,11 +163,13 @@ jobs:
             grep -q 'more than one hard link' "$RUNNER_TEMP/run-hard-link-$mask-check-no-listing/out.txt" \
               || { echo "UNEXPECTED: the hard link barrier did not fire on its own"; status=1; }
           done
-          for c in world-writable owner-only; do
-            run_case "$RUNNER_TEMP/check-no-chmod.sh" "$c" 0000 fail
-            grep -q 'a mode other than 0755 or 0644' "$RUNNER_TEMP/run-$c-0000-check-no-chmod/out.txt" \
-              || { echo "UNEXPECTED: the rebuilt modes check did not fire for $c"; status=1; }
-          done
+          run_case "$RUNNER_TEMP/check-no-chmod.sh" world-writable 0000 fail
+          grep -q 'a mode other than 0755 or 0644' "$RUNNER_TEMP/run-world-writable-0000-check-no-chmod/out.txt" \
+            || { echo "UNEXPECTED: the rebuilt modes check did not fire"; status=1; }
+          # Without the chmod, tar cannot even read the owner-only `--x` file to rebuild.
+          run_case "$RUNNER_TEMP/check-no-chmod.sh" owner-only 0000 fail
+          grep -q 'o.js: Cannot open: Permission denied' "$RUNNER_TEMP/run-owner-only-0000-check-no-chmod/out.txt" \
+            || { echo "UNEXPECTED: owner-only without chmod did not fail on the unreadable file"; status=1; }
           run_case "$RUNNER_TEMP/check-no-chmod.sh" real 0022 pass
           exit "$status"
       - name: Modes GNU tar extracts before normalization (umask 0000)
