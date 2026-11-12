@@ -6,7 +6,9 @@
 # tests/pnpm-build-settings by run.sh, which checks each expected failure (not only the exit
 # code). yq 4.54.1, jq 1.7 and shellcheck 0.9.0 are preinstalled on ubuntu-latest (Ubuntu 24.04
 # image 20261101.360.1, actions/runner-images Ubuntu2404-Readme.md, checked 12/11/2026). pnpm is
-# the version of factory docs/standards.md, since this repo has no package.json to pin it.
+# the version of factory docs/standards.md, since this repo has no package.json to pin it. Cases
+# holding `.test-pnpm` run with that stand-in as `pnpm` (an old version, an empty output); the
+# case fail-pnpm-pinned-old makes pnpm download the pnpm 10.0.0 it pins, so it needs the network.
 name: Test workflows
 
 on:

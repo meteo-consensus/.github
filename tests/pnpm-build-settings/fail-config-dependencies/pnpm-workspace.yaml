@@ -1,0 +1,5 @@
+packages:
+  - "."
+allowBuilds: {}
+configDependencies:
+  my-config: "1.0.0+sha512-AAAA"

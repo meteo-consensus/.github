@@ -1,0 +1,10 @@
+{
+  "name": "legacy-package-json",
+  "private": true,
+  "pnpm": {
+    "onlyBuiltDependencies": ["esbuild"],
+    "onlyBuiltDependenciesFile": "builds.json",
+    "neverBuiltDependencies": [],
+    "ignoredBuiltDependencies": ["sharp"]
+  }
+}

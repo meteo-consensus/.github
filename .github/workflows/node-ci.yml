@@ -5,12 +5,27 @@
 # Before `pnpm install`, the step "Check pnpm build settings" fails the job when the calling
 # repo's pnpm settings open dependency install scripts (meteo-consensus/.github#24), as the
 # supply chain rules of meteo-consensus/factory docs/standards.md require: approvals go through
-# `allowBuilds` only. It fails on `dangerouslyAllowAllBuilds` (any value), a `build` capability
-# in `permissions`, `strictDepBuilds: false` (in pnpm-workspace.yaml or .npmrc, or as the value
-# `pnpm config get` reports), and an `allowBuilds` entry set to `true` without a non-empty YAML
-# comment on its line or the line just above (the PR mention the rule also requires is checked
-# in review). It runs no code of the calling repo and no dependency. Settings passed through
-# `npm_config_*` variables or the runner's global configuration are out of its scope.
+# `allowBuilds` only. It reads pnpm-workspace.yaml, .npmrc and package.json as text, then the
+# effective values from `pnpm config get`, and fails on:
+# - `dangerouslyAllowAllBuilds` (any value), the `build` capability in `permissions` (any value,
+#   `false` included: build decisions go in `allowBuilds`), `strictDepBuilds` false;
+# - an `allowBuilds` entry set to true without a non-empty YAML comment on its line or on a
+#   comment line just above (the PR mention the rule also requires is checked in review).
+#   Entries set to true are written one per line: flow style (`allowBuilds: { a: true }`) is
+#   refused for them, even with a comment, since a comment there cannot name one entry;
+# - a root .pnpmfile.cjs or .pnpmfile.mjs, or a `pnpmfile`, `globalPnpmfile`,
+#   `configDependencies` or `include` setting: they load code or settings this check cannot read
+#   (a pnpmfile `updateConfig` hook can turn builds on), so they need an owner decision;
+# - the pre-pnpm 11 keys `onlyBuiltDependencies`, `onlyBuiltDependenciesFile`,
+#   `neverBuiltDependencies`, `ignoredBuiltDependencies`, in pnpm-workspace.yaml or in the `pnpm`
+#   field of package.json (pnpm 11 and later ignore them silently);
+# - a pnpm older than 12.11.0 (the first with `permissions`), or any `pnpm config get` that
+#   fails or prints nothing (fail closed).
+# YAML booleans are read as pnpm 12.17.0 reads them: true, yes, y, on and false, no, n, off, in
+# any case. The step runs no script of the calling repo and no dependency, but `pnpm --version`
+# and `pnpm config get` download and run the pnpm version the caller pins in `packageManager`.
+# Settings passed through `npm_config_*` variables or the runner's global configuration are out
+# of its scope.
 name: Node CI
 
 on:
@@ -38,20 +53,24 @@ jobs:
           # Writes a user-level .npmrc reading NODE_AUTH_TOKEN (pnpm ignores project-level tokens).
           registry-url: https://npm.pkg.github.com
           scope: "@meteo-consensus"
-      # Runs before Install: reads pnpm-workspace.yaml and .npmrc as text, then asks pnpm for the
-      # effective values (`pnpm config get` reads the settings; checked with pnpm 12.17.0 on
-      # 12/11/2026, it neither loads .pnpmfile.cjs nor installs configDependencies). No secret.
-      # Tested on the example repos of tests/pnpm-build-settings (workflow test-workflows.yml).
+      # Runs before Install, as described in the header. `pnpm config get` reads the settings only
+      # (checked with pnpm 12.17.0 on 12/11/2026: it neither loads .pnpmfile.cjs nor installs
+      # configDependencies). No secret. Tested on the example repos of tests/pnpm-build-settings
+      # (workflow test-workflows.yml).
       - name: Check pnpm build settings
         run: |
           set -euo pipefail
           ws=pnpm-workspace.yaml
           rc=.npmrc
-          policy="Approve each package in allowBuilds instead; anything else needs an owner decision (meteo-consensus/factory docs/standards.md, supply chain rules)."
+          pj=package.json
+          rules="meteo-consensus/factory docs/standards.md, supply chain rules"
+          policy="Approve each package in allowBuilds instead; anything else needs an owner decision ($rules)."
           daab="it lets every dependency that is not denied run its install scripts. $policy"
           strict="an unapproved dependency build no longer fails the install; remove the setting (pnpm defaults to true). $policy"
           perm="which outranks allowBuilds. $policy"
-          need="A true entry needs both: a non-empty YAML comment on its line or on the line just above giving the reason (checked here), and a mention in the pull request (checked in review). See meteo-consensus/factory docs/standards.md, supply chain rules."
+          code="it makes pnpm load code or settings this check cannot read (a pnpmfile updateConfig hook can turn dependency builds on), so it needs an owner decision ($rules)."
+          legacy="pnpm 11 and later ignore it silently; approvals go in allowBuilds ($rules)."
+          need="A true entry needs both: a non-empty YAML comment on its line or on the line just above giving the reason (checked here), and a mention in the pull request (checked in review). See $rules."
           failed=0
           static_true=0
 
@@ -65,6 +84,9 @@ jobs:
           lib='
           function trim(s) { sub(/^[ \t]+/, "", s); sub(/[ \t]+$/, "", s); return s }
           function err(msg) { print "ERR\t" NR "\t" msg }
+          # YAML booleans as pnpm 12.17.0 reads them (yes, y and on are true; no, n and off false).
+          function truthy(v) { v = tolower(v); return v == "true" || v == "yes" || v == "y" || v == "on" }
+          function falsy(v) { v = tolower(v); return v == "false" || v == "no" || v == "n" || v == "off" }
           # Splits "key: value # comment" into K, V and C (comment text, HASC if a # is there).
           function entry(s,   q, i, rest) {
             s = trim(s); K = ""; V = ""; C = ""; HASC = 0; q = substr(s, 1, 1)
@@ -87,7 +109,8 @@ jobs:
 
           scan() { # <file> <awk program>: annotates its errors, counts the allowBuilds true entries
             local out kind line text
-            out=$(awk -v sq="'" -v daab="$daab" -v strict="$strict" -v perm="$perm" -v need="$need" "$lib$2" "$1")
+            out=$(awk -v sq="'" -v daab="$daab" -v strict="$strict" -v perm="$perm" -v code="$code" \
+              -v legacy="$legacy" -v need="$need" "$lib$2" "$1")
             while IFS=$'\t' read -r kind line text; do
               case $kind in
                 ERR) annotate "$1" "$line" "$text" ;;
@@ -100,7 +123,13 @@ jobs:
             # The awk program is single-quoted on purpose: its $0 is awk's, not the shell's.
             # shellcheck disable=SC2016
             scan "$ws" '
-            BEGIN { build = "(^|[{, \t])[\"" sq "]?build[\"" sq "]?[ \t]*:" }
+            BEGIN {
+              build = "(^|[{, \t])[\"" sq "]?build[\"" sq "]?[ \t]*:"
+              flowtrue = ":[ \t]*(true|yes|y|on)[ \t]*([,}]|$)"
+              split("pnpmfile globalPnpmfile configDependencies include", a); for (i in a) loads[a[i]] = 1
+              split("onlyBuiltDependencies onlyBuiltDependenciesFile neverBuiltDependencies ignoredBuiltDependencies", a)
+              for (i in a) old[a[i]] = 1
+            }
             /^[ \t]*$/ { prevc = 0; next }
             /^[ \t]*#/ { prevc = ($0 ~ /^[ \t]*#[ \t]*[^ \t]/); next }
             /^[^ \t]/ {
@@ -108,10 +137,12 @@ jobs:
               if (!entry($0)) next
               section = K
               if (K == "dangerouslyAllowAllBuilds") err(K " is set (value: " V "): " daab)
-              if (K == "strictDepBuilds" && tolower(V) == "false") err(K " is false: " strict)
-              if (K == "permissions" && V ~ build) err("permissions grants the build capability, " perm)
-              if (K == "allowBuilds" && tolower(V) ~ /(^|[^a-z])true([^a-z]|$)/)
+              if (K == "strictDepBuilds" && falsy(V)) err(K " is false (value: " V "): " strict)
+              if (K == "permissions" && V ~ build) err("permissions sets the build capability (any value), " perm)
+              if (K == "allowBuilds" && tolower(V) ~ flowtrue)
                 err("allowBuilds is written in flow style with a true entry: write each true entry on its own line. " need)
+              if (K in loads) err(K " is set: " code)
+              if (K in old) err(K " is set: " legacy)
               next
             }
             {
@@ -119,9 +150,9 @@ jobs:
               if (section == "permissions" && entry($0)) {
                 if (ind == inner) pkg = K
                 if (ind > inner ? (K == "build") : (V ~ build))
-                  err("permissions grants the build capability (" pkg (ind > inner ? ": build: " V : ": " V) "), " perm)
+                  err("permissions sets the build capability for " pkg " (" (ind > inner ? "build: " V : V) "; any value is refused), " perm)
               }
-              if (section == "allowBuilds" && ind == inner && entry($0) && tolower(V) == "true") {
+              if (section == "allowBuilds" && ind == inner && entry($0) && truthy(V)) {
                 print "TRUE\t" NR "\t" K
                 if (!(HASC && C != "") && !prevc)
                   err("allowBuilds entry \"" K "\" is true without a justification comment. " need)
@@ -139,28 +170,64 @@ jobs:
               i = index($0, "="); key = trim(i ? substr($0, 1, i - 1) : $0); val = trim(i ? substr($0, i + 1) : "")
               k = tolower(key)
               if (k == "dangerously-allow-all-builds" || k == "dangerouslyallowallbuilds") err(key " is set (value: " val "): " daab)
-              else if ((k == "strict-dep-builds" || k == "strictdepbuilds") && tolower(val) == "false") err(key " is false: " strict)
-              else if (k ~ /^permissions/ && $0 ~ /build/) err("permissions grants the build capability, " perm)
+              else if ((k == "strict-dep-builds" || k == "strictdepbuilds") && falsy(val)) err(key " is false (value: " val "): " strict)
+              else if (k ~ /^permissions/ && $0 ~ /build/) err("permissions sets the build capability (any value), " perm)
             }'
           fi
 
-          # Effective values, as pnpm will read them for the install.
+          # Pnpmfiles are never run nor read here: their presence alone needs an owner decision.
+          for f in .pnpmfile.cjs .pnpmfile.mjs; do
+            if [ -e "$f" ] || [ -L "$f" ]; then annotate "$f" "" "$f exists: $code"; fi
+          done
+
+          if [ -f "$pj" ]; then
+            if ! old=$(jq -r '.pnpm | objects | keys[] | select(IN("onlyBuiltDependencies",
+              "onlyBuiltDependenciesFile", "neverBuiltDependencies", "ignoredBuiltDependencies"))' "$pj"); then
+              annotate "$pj" "" "package.json is not valid JSON: its pnpm field cannot be checked."
+              old=""
+            fi
+            while IFS= read -r key; do
+              key=${key%$'\r'}
+              if [ -n "$key" ]; then annotate "$pj" "" "pnpm.$key is set: $legacy"; fi
+            done <<<"$old"
+          fi
+
+          # The rules hold from pnpm 12.11.0 (permissions). `pnpm --version` runs the version the
+          # caller pins in packageManager, which is the one the install will run.
+          version=$(pnpm --version </dev/null | tail -n 1) || version=""
+          if [[ ! "$version" =~ ^([0-9]+)\.([0-9]+)\. ]] ||
+            ((BASH_REMATCH[1] < 12 || (BASH_REMATCH[1] == 12 && BASH_REMATCH[2] < 11))); then
+            pinned=""
+            if [ -f "$pj" ]; then pinned=$pj; fi
+            annotate "$pinned" "" "pnpm ${version:-(no version reported)} runs here (the packageManager field of package.json picks it): these rules need pnpm 12.11.0 or later, the first with the permissions setting. Pin pnpm 12.11.0 or later; the effective values were not checked ($rules)."
+            exit 1
+          fi
+
+          # Effective values, as pnpm will read them for the install. Fails closed: an error, no
+          # output or an output jq cannot read fails the check.
           where=""
           if [ -f "$ws" ]; then where=$ws; elif [ -f "$rc" ]; then where=$rc; fi
-          effective() { # <setting> <jq expression> <message if the expression yields true>
-            local value verdict
-            if ! value=$(pnpm config get "$1" --json) || ! verdict=$(jq -r "$2" <<<"$value"); then
-              annotate "$where" "" "pnpm config get $1 failed: the effective value cannot be checked."
-            elif [ "$verdict" = true ]; then
-              annotate "$where" "" "effective value of $1 $3"
+          effective() { # <setting> <jq expression yielding true or false> <message if true>
+            local value verdict=""
+            if value=$(pnpm config get "$1" --json </dev/null); then
+              verdict=$(jq -r "$2" <<<"$value") || verdict=""
             fi
+            case $verdict in
+              true) annotate "$where" "" "effective value of $1 $3" ;;
+              false) ;;
+              *) annotate "$where" "" "pnpm config get $1 failed or printed nothing: the effective value cannot be checked, so the check fails." ;;
+            esac
           }
+          set_value='. != null and . != "" and . != [] and . != {}'
           effective dangerouslyAllowAllBuilds '. == true' "is true (pnpm config get): $daab"
           effective strictDepBuilds '. == false' "is false (pnpm config get): $strict"
           effective permissions '[.[]? | objects | select(has("build"))] | length > 0' \
-            "grants the build capability (pnpm config get), $perm"
+            "sets the build capability (pnpm config get; any value is refused), $perm"
           effective allowBuilds "[.[]? | select(. == true)] | length > $static_true" \
             "has more true entries (pnpm config get) than the $static_true written one per line in $ws, where this check reads their comment. $need"
+          for setting in pnpmfile globalPnpmfile configDependencies include; do
+            effective "$setting" "$set_value" "is set (pnpm config get): $code"
+          done
 
           if [ "$failed" -ne 0 ]; then exit 1; fi
           echo "pnpm build settings: no setting opens dependency install scripts."

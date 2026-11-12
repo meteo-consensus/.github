@@ -1,0 +1,4 @@
+packages:
+  - "."
+allowBuilds: {}
+globalPnpmfile: tools/global.cjs

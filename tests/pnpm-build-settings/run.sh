@@ -20,7 +20,16 @@ for dir in "$here"/*/; do
   expect="$here/$name.expect"
   out="$work/$name.out"
   code=0
-  (cd "$dir" && bash "$check") >"$out" 2>&1 || code=$?
+  # A case holding `.test-pnpm` runs with that script first on PATH as `pnpm`, to test what the
+  # check does with a pnpm version or an output that the real pnpm cannot produce offline.
+  path=$PATH
+  if [ -f "$dir/.test-pnpm" ]; then
+    mkdir -p "$work/$name.bin"
+    cp "$dir/.test-pnpm" "$work/$name.bin/pnpm"
+    chmod +x "$work/$name.bin/pnpm"
+    path="$work/$name.bin:$PATH"
+  fi
+  (cd "$dir" && PATH=$path bash "$check") >"$out" 2>&1 || code=$?
 
   ok=1
   errors=$(grep -c '^::error' "$out" || true)

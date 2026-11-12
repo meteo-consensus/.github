@@ -1,0 +1,6 @@
+packages:
+  - "."
+allowBuilds: {}
+include:
+  ./builds.yaml:
+    - dangerouslyAllowAllBuilds

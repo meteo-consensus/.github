@@ -1,0 +1,9 @@
+fail
+::error::pnpm config get dangerouslyAllowAllBuilds failed or printed nothing
+::error::pnpm config get strictDepBuilds failed or printed nothing
+::error::pnpm config get permissions failed or printed nothing
+::error::pnpm config get allowBuilds failed or printed nothing
+::error::pnpm config get pnpmfile failed or printed nothing
+::error::pnpm config get globalPnpmfile failed or printed nothing
+::error::pnpm config get configDependencies failed or printed nothing
+::error::pnpm config get include failed or printed nothing
